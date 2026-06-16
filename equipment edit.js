@@ -9,7 +9,7 @@
  *            - ถอดอุปกรณ์กลับเข้าคลัง
  *            - ตรวจสอบความเข้ากันของสล็อต
  *            - ป้องกันการสวมใส่ที่ไม่ถูกต้อง
- *            - คำนวณและปรับใช้สเตตัสจากอุปกรณ์
+ *            - คำนวณและปรับใช้สเตตัสจากอุปกรณ์ (ผ่าน recalculateEquipmentStats)
  *
  * อ้างอิง: Jianghu RPG — Game Bible v1.0
  *   - Section 4:  Equipment System (Slots, Types, Stats)
@@ -232,7 +232,6 @@ function _calculateItemStatBonuses(itemData) {
     }
 
     // สเตตัสที่ไม่รู้จัก — ไม่ทำอะไร (อนาคตอาจมีสเตตัสใหม่จาก Expansion)
-    // ไม่ throw Error เพื่อความทนทานต่อเนื้อหาใหม่
   }
 
   return { direct, primary };
@@ -254,72 +253,6 @@ function _mergeBonuses(bonuses) {
   return merged;
 }
 
-/**
- * บวก/ลบค่าโบนัสเข้า/ออกจาก player.combat_stats
- *
- * หลักการ:
- *   - ทุก combat stat key ที่มีใน bonuses: บวก/ลบตาม operator
- *   - HP/MP max ที่เปลี่ยน: ต้องปรับ hp/mp ปัจจุบันด้วย
- *     * ถ้าบวก (equip): hp/mp ปัจจุบันเพิ่มตาม (ไม่ให้ผู้เล่นเสีย HP/MP ที่มีอยู่)
- *     * ถ้าลบ (unequip): hp/mp ปัจจุบันต้องไม่เกิน max ใหม่
- *   - ค่าติดลบไม่ได้: clamp ที่ 0
- *
- * @param {Object} player
- * @param {Object} bonuses - { combatStatKey: deltaValue }
- * @param {number} operator - +1 (บวก) หรือ -1 (ลบ)
- */
-function _applyCombatStatDeltas(player, bonuses, operator) {
-  const cs = player.combat_stats;
-
-  // เก็บค่า hp_max/mp_max เดิมไว้เพื่อคำนวณการเปลี่ยนแปลง
-  const oldHpMax = cs.hp_max;
-  const oldMpMax = cs.mp_max;
-
-  for (const [key, delta] of Object.entries(bonuses)) {
-    if (typeof cs[key] !== "number") {
-      // ฟิลด์ไม่มีใน combat_stats — ข้าม (รองรับ expansion stats ในอนาคต)
-      continue;
-    }
-
-    const change = delta * operator;
-    cs[key] = cs[key] + change;
-
-    // Clamp ค่าติดลบ (combat stats ทุกตัวต้อง >= 0)
-    if (cs[key] < 0) {
-      cs[key] = 0;
-    }
-  }
-
-  // จัดการ HP ปัจจุบันให้สอดคล้องกับ Max ที่เปลี่ยนไป
-  if (bonuses.hp_max !== undefined) {
-    const newHpMax = cs.hp_max;
-    if (operator > 0) {
-      // Equip: max เพิ่ม → hp ปัจจุบันเพิ่มตาม (รักษาสัดส่วนหรือบวก flat)
-      // ใช้ flat increase เพื่อความเรียบง่าย: hp += delta
-      cs.hp = Math.min(newHpMax, cs.hp + bonuses.hp_max);
-    } else {
-      // Unequip: max ลด → hp ปัจจุบันต้องไม่เกิน max ใหม่
-      cs.hp = Math.min(newHpMax, cs.hp);
-    }
-    // ป้องกัน hp ติดลบ
-    cs.hp = Math.max(0, cs.hp);
-  }
-
-  // จัดการ MP ปัจจุบันให้สอดคล้องกับ Max ที่เปลี่ยนไป
-  if (bonuses.mp_max !== undefined) {
-    const newMpMax = cs.mp_max;
-    if (operator > 0) {
-      // Equip: max เพิ่ม → mp ปัจจุบันเพิ่มตาม
-      cs.mp = Math.min(newMpMax, cs.mp + bonuses.mp_max);
-    } else {
-      // Unequip: max ลด → mp ปัจจุบันต้องไม่เกิน max ใหม่
-      cs.mp = Math.min(newMpMax, cs.mp);
-    }
-    // ป้องกัน mp ติดลบ
-    cs.mp = Math.max(0, cs.mp);
-  }
-}
-
 // =============================================================================
 // SECTION C: CORE API — EQUIP / UNEQUIP / SWAP
 // =============================================================================
@@ -333,7 +266,7 @@ function _applyCombatStatDeltas(player, bonuses, operator) {
  *   3. ถ้าสล็อตมีอุปกรณ์อยู่แล้ว → ถอดออกก่อน (auto-unequip)
  *   4. ลบไอเทมออกจากคลัง (โดย instanceId)
  *   5. ใส่ไอเทมเข้าสล็อต
- *   6. คำนวณและบวกสเตตัสเข้า combat_stats
+ *   6. เรียก recalculateEquipmentStats เพื่อรวมสถิติใหม่ทั้งหมด
  *
  * @param {Object} player - Player object
  * @param {string} instanceId - instanceId ของไอเทมในคลัง
@@ -378,36 +311,29 @@ function equipItem(player, instanceId, itemData) {
     );
   }
 
-  // 3. คำนวณโบนัสจากไอเทมชิ้นนี้ (ก่อน mutate)
-  const itemBonuses = _calculateItemStatBonuses(itemData);
-  const totalBonuses = _mergeBonuses(itemBonuses);
-
-  // 4. ถ้าสล็อตมีอุปกรณ์อยู่แล้ว → ถอดออกก่อน
+  // 3. ถ้าสล็อตมีอุปกรณ์อยู่แล้ว → ถอดออกก่อน
   let previousItem = null;
   if (player.equipment[targetSlot] !== null) {
     previousItem = unequipItem(player, targetSlot);
   }
 
-  // 5. ลบไอเทมออกจากคลัง (โดย instanceId)
+  // 4. ลบไอเทมออกจากคลัง (โดย instanceId)
   const removedEntry = _removeInventoryEntryByInstanceId(player, instanceId);
   if (!removedEntry) {
-    // ไม่น่าเกิดขึ้นเพราะเช็คแล้ว แต่ป้องกัน race condition
     throw new Error(
       `Failed to remove item with instanceId "${instanceId}" from inventory.`
     );
   }
 
-  // 6. เก็บไอเทมเข้าสล็อต (เก็บทั้ง instanceId + itemData แบบเต็ม)
-  // โครงสร้าง: { instanceId, itemId, itemData }
-  // เก็บ itemData เพื่อให้ไม่ต้อง query database อีกครั้งเมื่อต้องคำนวณสเตตัส
+  // 5. เก็บไอเทมเข้าสล็อต
   player.equipment[targetSlot] = {
     instanceId: removedEntry.instanceId,
     itemId: removedEntry.itemId,
     itemData: itemData,
   };
 
-  // 7. บวกโบนัสเข้า combat_stats
-  _applyCombatStatDeltas(player, totalBonuses, +1);
+  // 6. recalculate stats ทั้งหมด (base + equipment)
+  recalculateEquipmentStats(player);
 
   _touch(player);
 
@@ -416,7 +342,7 @@ function equipItem(player, instanceId, itemData) {
     slot: targetSlot,
     previousItem: previousItem,
     equippedItem: player.equipment[targetSlot],
-    bonusesApplied: totalBonuses,
+    bonusesApplied: calculateTotalEquipmentBonuses(player).total,
   };
 }
 
@@ -426,13 +352,9 @@ function equipItem(player, instanceId, itemData) {
  * หลักการ:
  *   1. ตรวจสอบสล็อตถูกต้อง
  *   2. ตรวจสอบว่ามีอุปกรณ์ในสล็อต
- *   3. คำนวณโบนัสที่ต้องลบออก
- *   4. ลบโบนัสออกจาก combat_stats
- *   5. คืนไอเทมเข้าคลัง (push ตรงเพื่อ preserve instanceId)
- *   6. เคลียร์สล็อต
- *
- * หมายเหตุสำคัญ: ไม่ใช้ InventoryModule.addItem() เพราะ addItem จะสร้าง
- * instanceId ใหม่ ซึ่งขัดกับ requirement "Preserve original instanceId"
+ *   3. คืนไอเทมเข้าคลัง (push ตรงเพื่อ preserve instanceId)
+ *   4. เคลียร์สล็อต
+ *   5. เรียก recalculateEquipmentStats เพื่ออัปเดตสถิติ
  *
  * @param {Object} player - Player object
  * @param {string} slot - "weapon" | "armor" | "accessory"
@@ -452,13 +374,6 @@ function unequipItem(player, slot) {
     throw new Error(`No item equipped in slot "${slot}".`);
   }
 
-  // คำนวณโบนัสที่ต้องลบออก
-  const itemBonuses = _calculateItemStatBonuses(equipped.itemData);
-  const totalBonuses = _mergeBonuses(itemBonuses);
-
-  // ลบโบนัสออกจาก combat_stats
-  _applyCombatStatDeltas(player, totalBonuses, -1);
-
   // คืนไอเทมเข้าคลังโดยตรง (preserve instanceId)
   const returnedEntry = {
     instanceId: equipped.instanceId,
@@ -472,11 +387,14 @@ function unequipItem(player, slot) {
     success: true,
     slot: slot,
     returnedItem: { ...equipped },
-    bonusesRemoved: totalBonuses,
+    bonusesRemoved: calculateTotalEquipmentBonuses({ ...player, equipment: { [slot]: equipped } }).total,
   };
 
   // เคลียร์สล็อต
   player.equipment[slot] = null;
+
+  // recalculate stats ทั้งหมด (base + equipment ที่เหลือ)
+  recalculateEquipmentStats(player);
 
   _touch(player);
 
@@ -550,7 +468,6 @@ function getEquippedItem(player, slot) {
   const equipped = player.equipment[slot];
   if (!equipped) return null;
 
-  // คืนค่าสำเนาเพื่อป้องกันการ mutate จากภายนอก
   return {
     instanceId: equipped.instanceId,
     itemId: equipped.itemId,
@@ -650,34 +567,35 @@ function calculateTotalPowerScore(player) {
 }
 
 // =============================================================================
-// SECTION F: RECALCULATION API (สำหรับใช้หลัง player.js recalculate)
+// SECTION F: RECALCULATION API (ใช้สำหรับอัปเดตสถิติรวมหลังจาก base stats เปลี่ยน)
 // =============================================================================
 
 /**
- * คำนวณ Base Combat Stats จาก Primary Stats ของผู้เล่น
- * ใช้สูตรจาก Game Bible §2.3 (ไม่รวมอุปกรณ์)
+ * คำนวณ Base Combat Stats จาก Primary Stats โดยรวม Advancement multiplier
+ * ฟังก์ชันนี้ใช้ PlayerModule (ถ้ามี) หรือ fallback ใช้ฟังก์ชันในตัวที่จำลองตาม Game Bible
  *
- * หมายเหตุ: ฟังก์ชันนี้ใช้สูตรจาก Game Bible โดยตรง
- * player.js export แค่ calcBaseAtk, calcMaxHp, calcMaxMp
- * สูตรอื่น (def, dodge, crit, accuracy) ไม่ได้ export จึงต้องใช้จากแหล่งต้นฉบับ (Game Bible)
- * ไม่ใช่การ "duplicate player.js" แต่เป็นการใช้ Source of Truth เดียวกัน
- *
- * @param {Object} stats - { str, con, agi, int, luck }
- * @returns {Object} base combat stats
+ * @param {Object} player
+ * @returns {Object} base combat stats (ยังไม่รวมอุปกรณ์)
  */
-function calculateBaseCombatStats(stats) {
-  const s = stats || {};
-  const str = s.str || 0;
-  const con = s.con || 0;
-  const agi = s.agi || 0;
-  const int_stat = s.int || 0;
-  const luck = s.luck || 0;
+function _getBaseCombatStats(player) {
+  // ถ้า player มี property _base_combat_stats ที่ player.js สร้างให้ ให้นำมาใช้เลย
+  if (player._base_combat_stats && typeof player._base_combat_stats === 'object') {
+    return { ...player._base_combat_stats };
+  }
 
+  // ถ้าไม่มี แสดงว่าถูกเรียกจากที่อื่น (เช่น หลัง load game ยังไม่ได้ recalculate)
+  // ลองเรียกใช้ PlayerModule ถ้ามี
+  if (typeof PlayerModule !== 'undefined' && PlayerModule.calculateBaseCombatStatsWithMultiplier) {
+    return PlayerModule.calculateBaseCombatStatsWithMultiplier(player);
+  }
+
+  // fallback สูตรตาม Game Bible (อย่างง่าย ไม่รวม advancement multiplier)
+  // ใช้สำหรับกรณีที่ไม่มี player.js module จริง ๆ (เช่น test standalone)
+  const s = player.stats;
+  const str = s.str || 0, con = s.con || 0, agi = s.agi || 0, ints = s.int || 0, luck = s.luck || 0;
   return {
-    hp: con * 10,
-    hp_max: con * 10,
-    mp: int_stat * 8,
-    mp_max: int_stat * 8,
+    hp: con * 10, hp_max: con * 10,
+    mp: ints * 8, mp_max: ints * 8,
     atk: str * 2.5,
     def: con * 0.5,
     crit: 5 + (agi * 0.15) + (luck * 0.1),
@@ -692,9 +610,9 @@ function calculateBaseCombatStats(stats) {
 }
 
 /**
- * คำนวณและปรับ combat_stats ให้ถูกต้องจาก Primary Stats + อุปกรณ์
- * ใช้หลังจาก player.js _recalculateCombatStats (ที่ไม่รวมอุปกรณ์)
- * เพื่อให้ combat_stats สะท้อนค่าจริงรวมอุปกรณ์
+ * คำนวณและปรับ combat_stats ให้ถูกต้องจาก Base Stats + อุปกรณ์ทั้งหมด
+ * ฟังก์ชันนี้จะถูกเรียกจาก player.js หลังจาก base stats เปลี่ยน (level up, allocate stat)
+ * และเรียกจาก equip/unequip หลังจากเปลี่ยนแปลงอุปกรณ์
  *
  * @param {Object} player
  * @returns {Object} player.combat_stats หลังปรับ
@@ -702,27 +620,37 @@ function calculateBaseCombatStats(stats) {
 function recalculateEquipmentStats(player) {
   _assertPlayer(player);
 
-  // 1. คำนวณ Base Combat Stats จาก Primary Stats (ไม่รวมอุปกรณ์)
-  const baseStats = calculateBaseCombatStats(player.stats);
+  // 1. ดึง base stats (primary + advancement)
+  const baseStats = _getBaseCombatStats(player);
 
   // 2. คำนวณโบนัสจากอุปกรณ์ทั้งหมด
   const equipmentBonuses = calculateTotalEquipmentBonuses(player);
 
-  // 3. รวม Base + Equipment
-  const cs = player.combat_stats;
-  for (const key of Object.keys(baseStats)) {
-    if (typeof cs[key] === "number") {
-      cs[key] = baseStats[key] + (equipmentBonuses.total[key] || 0);
+  // 3. รวม base + equipment
+  const newCombat = { ...baseStats };
+  for (const [key, val] of Object.entries(equipmentBonuses.total)) {
+    if (typeof newCombat[key] === 'number') {
+      newCombat[key] += val;
     }
   }
 
-  // 4. Clamp HP/MP ปัจจุบันให้อยู่ในช่วงที่ถูกต้อง
-  cs.hp = Math.max(0, Math.min(cs.hp_max, cs.hp));
-  cs.mp = Math.max(0, Math.min(cs.mp_max, cs.mp));
+  // 4. รักษาค่า hp/mp ปัจจุบันให้อยู่ในช่วง max (แต่อย่าให้เกิน)
+  const oldHp = player.combat_stats.hp;
+  const oldMp = player.combat_stats.mp;
+  newCombat.hp = Math.min(newCombat.hp_max, oldHp);
+  newCombat.mp = Math.min(newCombat.mp_max, oldMp);
+  // ป้องกันค่าติดลบ
+  newCombat.hp = Math.max(0, newCombat.hp);
+  newCombat.mp = Math.max(0, newCombat.mp);
+
+  // 5. อัปเดต combat_stats
+  Object.assign(player.combat_stats, newCombat);
+
+  // 6. ถ้ามี property _base_combat_stats ให้ลบออก (ไม่ต้องการเก็บไว้นาน เพราะ base อาจเปลี่ยน)
+  delete player._base_combat_stats;
 
   _touch(player);
-
-  return cs;
+  return player.combat_stats;
 }
 
 // =============================================================================
@@ -761,8 +689,6 @@ function isItemInInventory(player, instanceId) {
 
 /**
  * EquipmentModule — API สาธารณะสำหรับระบบอื่น
- *
- * ระบบภายนอกเรียกใช้ผ่าน EquipmentModule.xxx() เท่านั้น
  */
 const EquipmentModule = Object.freeze({
   // Constants (read-only)
@@ -781,8 +707,7 @@ const EquipmentModule = Object.freeze({
   // Stat Calculation
   calculateTotalEquipmentBonuses,
   calculateTotalPowerScore,
-  calculateBaseCombatStats,
-  recalculateEquipmentStats,
+  recalculateEquipmentStats,   // ฟังก์ชันหลักสำหรับรวมสถิติ
 
   // Validation
   canEquipInSlot,
