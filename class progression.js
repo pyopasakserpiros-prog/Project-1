@@ -1,4 +1,4 @@
-export const classProgression = [
+export const classProgressionMilestones = [
   {
     level: 1,
     name: "จอมยุทธ์ฝึกหัด",

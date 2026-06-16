@@ -328,17 +328,19 @@ export const TALENT_POOL = [
   { id: 48, tier: "Legendary", name: "ใจมังกร", effect: "เมื่อโจมตีคริติคอล ฟื้น HP 10% ของ Max HP" },
   { id: 49, tier: "Legendary", name: "พลังสะท้านฟ้า", effect: "สกิล Active Cooldown ลด 1 เทิร์น, MP ลด 20%" },
   { id: 50, tier: "Legendary", name: "อมตะ", effect: "เมื่อ HP เหลือ 0 จะรอดด้วย HP 1 (1 ครั้ง/ต่อสู้)" },
-  // Mythic (51-60)
-  { id: 51, tier: "Mythic", name: "คัมภีร์เทพสยบฟ้า", effect: "Base Stats ทั้งหมด +50, หาก HP < 30% ทุก Stat x2" },
-  { id: 52, tier: "Mythic", name: "กายาไม่ตาย", effect: "เมื่อตาย ฟื้น 100% HP/MP และสะท้อนดาเมจ 500% (1 ครั้ง/สัปดาห์)" },
-  { id: 53, tier: "Mythic", name: "เนตรกาลเวลา", effect: "ACCURACY 200%, CRIT 100%, ARMOR_PEN 100% เป็นเวลา 2 เทิร์นเมื่อเริ่มสู้" },
-  { id: 54, tier: "Mythic", name: "ปราณกำเนิดใหม่", effect: "เปลี่ยน 50% ดาเมจที่ได้รับเป็น HP ฟื้น" },
-  { id: 55, tier: "Mythic", name: "โลหิตมังกร", effect: "ทุกเทิร์นปล่อยคลื่น 50% Max HP True Damage ใส่ศัตรูทั้งหมด" },
-  { id: 56, tier: "Mythic", name: "จิตเหนือสัจธรรม", effect: "ปลดล็อค Stat Cap ในการต่อสู้ CRIT/DODGE/ARMOR_PEN สูงสุด 100%" },
-  { id: 57, tier: "Mythic", name: "พิษกลืนฟ้า", effect: "สถานะ Poison ที่สร้างจะกระจายทวีคูณและทะลุความต้านทาน" },
-  { id: 58, tier: "Mythic", name: "ค่ายกลมรณะ", effect: "พื้นที่ต่อสู้ทำดาเมจ 10% Max HP แก่ศัตรูทุกเทิร์น" },
-  { id: 59, tier: "Mythic", name: "มนตราบงการ", effect: "เริ่มต่อสู้ศัตรู Level ต่ำกว่าตายทันที (ยกเว้น Boss)" },
-  { id: 60, tier: "Mythic", name: "เซียนไร้ร่าง", effect: "DODGE +30%, เมื่อ HP > 50% ลดดาเมจ 80%" }
+  { id: 51, tier: "Legendary", name: "พิษสลายฟ้าดิน", effect: "Poison ดาเมจ x2, ทะลุความต้านทาน 50%, ระยะเวลา Poison +2 เทิร์น" },
+  { id: 52, tier: "Legendary", name: "ปราณน้ำแข็ง", effect: "สกิล Internal มีโอกาส 30% แช่แข็งศัตรู 1 เทิร์น, ลด AGI ศัตรู 40%" },
+  // Mythic (53-62)
+  { id: 53, tier: "Mythic", name: "คัมภีร์เทพสยบฟ้า", effect: "Base Stats ทั้งหมด +50, หาก HP < 30% ทุก Stat x2" },
+  { id: 54, tier: "Mythic", name: "กายาไม่ตาย", effect: "เมื่อตาย ฟื้น 100% HP/MP และสะท้อนดาเมจ 500% (1 ครั้ง/สัปดาห์)" },
+  { id: 55, tier: "Mythic", name: "เนตรกาลเวลา", effect: "ACCURACY 200%, CRIT 100%, ARMOR_PEN 100% เป็นเวลา 2 เทิร์นเมื่อเริ่มสู้" },
+  { id: 56, tier: "Mythic", name: "ปราณกำเนิดใหม่", effect: "เปลี่ยน 50% ดาเมจที่ได้รับเป็น HP ฟื้น" },
+  { id: 57, tier: "Mythic", name: "โลหิตมังกร", effect: "ทุกเทิร์นปล่อยคลื่น 50% Max HP True Damage ใส่ศัตรูทั้งหมด" },
+  { id: 58, tier: "Mythic", name: "จิตเหนือสัจธรรม", effect: "ปลดล็อค Stat Cap ในการต่อสู้ CRIT/DODGE/ARMOR_PEN สูงสุด 100%" },
+  { id: 59, tier: "Mythic", name: "พิษกลืนฟ้า", effect: "สถานะ Poison ที่สร้างจะกระจายทวีคูณและทะลุความต้านทาน" },
+  { id: 60, tier: "Mythic", name: "ค่ายกลมรณะ", effect: "พื้นที่ต่อสู้ทำดาเมจ 10% Max HP แก่ศัตรูทุกเทิร์น" },
+  { id: 61, tier: "Mythic", name: "มนตราบงการ", effect: "เริ่มต่อสู้ศัตรู Level ต่ำกว่าตายทันที (ยกเว้น Boss)" },
+  { id: 62, tier: "Mythic", name: "เซียนไร้ร่าง", effect: "DODGE +30%, เมื่อ HP > 50% ลดดาเมจ 80%" }
 ];
 
 // ============================================================
@@ -582,7 +584,7 @@ export const SPECIAL_FOLLOWERS = [
     name: "เว่ยจิง",
     title: "อสรพิษทอง",
     archetype: "นักพิษ",
-    mainTalent: "พิษสลายฟ้าดิน (ตำนาน)",
+    mainTalent: "พิษสลายฟ้าดิน",
     specialty: "Poison ดาเมจ x2"
   },
   {
@@ -646,7 +648,7 @@ export const SPECIAL_FOLLOWERS = [
     name: "เปียวอวิ๋น",
     title: "น้ำแข็งพันปี",
     archetype: "จอมปราณ",
-    mainTalent: "ปราณน้ำแข็ง (ตำนาน)",
+    mainTalent: "ปราณน้ำแข็ง",
     specialty: "สกิล Internal มีโอกาสแช่แข็ง"
   },
   {
