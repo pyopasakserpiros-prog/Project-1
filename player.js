@@ -282,12 +282,8 @@ function calcSkillSlots(level) {
 }
 
 /**
- * สร้าง Combat Stats ทั้งหมดจาก Primary Stats ที่กำหนด
- * (ใช้ตอน New Game และตอน Recalculate หลัง Level Up / Stat Allocation)
- *
- * หมายเหตุ: ค่าจาก Equipment/Skills ไม่ได้รวมที่นี่
- * ระบบ Equipment/Skill จะ apply เพิ่มเติมแยกต่างหาก
- *
+ * สร้าง Combat Stats ทั้งหมดจาก Primary Stats ที่กำหนด (ไม่รวม Advancement multiplier)
+ * ใช้สำหรับ build basic structure
  * @param {Object} stats - { str, con, agi, int, luck }
  * @returns {Object} combat_stats ตาม Player Schema §13.1
  */
@@ -551,6 +547,9 @@ function addExp(player, amount) {
     player.exp = 0;
   }
 
+  // หลังจาก level up ต้อง recalculate stats รวมอุปกรณ์อีกครั้ง
+  _recalculateCombatStatsWithEquipment(player);
+
   _touch(player);
   return { player, leveled_up, levels_gained };
 }
@@ -582,8 +581,8 @@ function allocateStat(player, statKey, points = 1) {
   player.stats[statKey]                += points;
   player.stats.stat_points_available   -= points;
 
-  // Recalculate combat stats ที่ได้รับผลจาก primary stat ที่เปลี่ยน
-  _recalculateCombatStats(player);
+  // Recalculate base stats (ไม่รวม equipment) แล้วรวม equipment อีกครั้ง
+  _recalculateCombatStatsWithEquipment(player);
   _touch(player);
   return player;
 }
@@ -742,7 +741,7 @@ function _touch(player) {
 
 /**
  * Apply Advancement bonuses เมื่อ Level ถึง milestone ใหม่
- * อัปเดต: rank, skill_slots, combat_stats, unlocks
+ * อัปเดต: rank, skill_slots, (combat stats จะถูกจัดการใน recalculate)
  * @see Game Bible §3.1
  * @param {Object} player
  */
@@ -756,32 +755,32 @@ function _applyAdvancement(player) {
   player.skills.active_slots  = tier.active_slots;
   player.skills.passive_slots = tier.passive_slots;
 
-  // Recalculate combat stats (อาจมี Multiplier จาก Advancement)
-  _recalculateCombatStats(player);
+  // CRIT_DAMAGE bonus จาก Advancement (เช่น +10% ที่ Lv20)
+  let critDmgBonus = 0;
+  for (const t of ADVANCEMENT_TABLE) {
+    if (t.min_level > player.level) break;
+    if (t.crit_damage_bonus) critDmgBonus += t.crit_damage_bonus;
+  }
+  // Crit damage bonus จะถูกนำไปใช้ใน _recalculateBaseStats ข้างล่าง
+  // เราไม่ตั้งค่าโดยตรงเดี๋ยวนี้ เดี๋ยว recalculate จัดการให้
 }
 
 /**
- * Recalculate combat_stats ทั้งหมดจาก Primary Stats ปัจจุบัน
- * พร้อม apply Advancement multiplier ถ้ามี
- *
- * หมายเหตุสำคัญ: ฟังก์ชันนี้คำนวณเฉพาะ "base from primary stats"
- * ค่า bonus จาก Equipment และ Skills ต้อง add on top โดยระบบภายนอก
- *
- * @see Game Bible §2.3, §3.1 (base_stat_multiplier ที่ Lv50/70/80)
+ * คำนวณ Base Combat Stats จาก Primary Stats โดยรวม Advancement multiplier (สะสม)
+ * และรวม CRIT_DAMAGE bonus จาก Advancement
  * @param {Object} player
+ * @returns {Object} base combat stats (ยังไม่รวม equipment)
  */
-function _recalculateCombatStats(player) {
-  // หา Advancement multiplier สะสม (ถ้ามี)
-  // §3.1: Lv50 → ×1.1, Lv70 → ×1.2, Lv80 → ×1.3 (สะสม, ใช้ค่าล่าสุด)
+function _calculateBaseStatsWithAdvancement(player) {
+  // หา cumulative multiplier สำหรับ Primary Stats (Lv50: 1.1, Lv70: 1.2, Lv80: 1.3 -> คูณกัน)
   let baseMultiplier = 1.0;
   for (const tier of ADVANCEMENT_TABLE) {
     if (tier.min_level > player.level) break;
     if (tier.base_stat_multiplier) {
-      baseMultiplier = tier.base_stat_multiplier;
+      baseMultiplier *= tier.base_stat_multiplier;   // ✅ แก้เป็นสะสม
     }
   }
 
-  // คูณ Primary Stats ด้วย Multiplier ก่อนส่งเข้า build function
   const effectiveStats = {
     str:  player.stats.str  * baseMultiplier,
     con:  player.stats.con  * baseMultiplier,
@@ -790,26 +789,58 @@ function _recalculateCombatStats(player) {
     luck: player.stats.luck * baseMultiplier,
   };
 
-  const newCombat = buildCombatStatsFromPrimary(effectiveStats);
+  const baseStats = buildCombatStatsFromPrimary(effectiveStats);
 
-  // อัปเดต Max values แต่ preserve HP/MP ปัจจุบัน (clamp ถ้าเกิน)
-  const prevHp = player.combat_stats.hp;
-  const prevMp = player.combat_stats.mp;
-
-  Object.assign(player.combat_stats, newCombat);
-
-  // HP/MP ปัจจุบันไม่ลดลงต่ำกว่าเดิม เมื่อ Max เพิ่ม
-  player.combat_stats.hp = Math.min(prevHp, player.combat_stats.hp_max);
-  player.combat_stats.mp = Math.min(prevMp, player.combat_stats.mp_max);
-
-  // Apply CRIT_DAMAGE bonus จาก Advancement (เช่น +10% ที่ Lv20)
-  // §3.1: CRIT_DAMAGE Base เพิ่ม +10% ที่ Lv20
+  // เพิ่ม CRIT_DAMAGE bonus จาก Advancement (Lv20 +10%)
   let critDmgBonus = 0;
   for (const tier of ADVANCEMENT_TABLE) {
     if (tier.min_level > player.level) break;
     if (tier.crit_damage_bonus) critDmgBonus += tier.crit_damage_bonus;
   }
-  player.combat_stats.crit_damage = BASE_COMBAT_DEFAULTS.crit_damage + critDmgBonus;
+  baseStats.crit_damage += critDmgBonus;
+
+  return baseStats;
+}
+
+/**
+ * Recalculate combat stats เฉพาะ base (primary + advancement) โดยไม่แตะ equipment
+ * ใช้ภายในก่อนเรียก equipment module
+ * @param {Object} player
+ * @returns {Object} baseStats
+ */
+function _recalculateBaseStats(player) {
+  const baseStats = _calculateBaseStatsWithAdvancement(player);
+  // เก็บ base stats ไว้ใน property ชั่วคราว
+  player._base_combat_stats = baseStats;
+  return baseStats;
+}
+
+/**
+ * Recalculate combat stats พร้อมรวมอุปกรณ์ (เรียกหลังจาก base stats เปลี่ยน)
+ * วิธีนี้จะ:
+ *   1. คำนวณ base stats (primary + advancement) และเก็บใน player._base_combat_stats
+ *   2. ถ้ามี EquipmentModule ให้เรียกให้มันรวมโบนัสจากอุปกรณ์
+ *   3. ถ้าไม่มี equipment module ก็ fallback ใช้ base stats เฉย ๆ
+ * @param {Object} player
+ */
+function _recalculateCombatStatsWithEquipment(player) {
+  // 1. คำนวณ base stats (พร้อม advancement)
+  const baseStats = _calculateBaseStatsWithAdvancement(player);
+  player._base_combat_stats = baseStats;
+
+  // 2. ถ้ามี equipment module ให้มันรวมโบนัส
+  if (typeof EquipmentModule !== 'undefined' && EquipmentModule.recalculateEquipmentStats) {
+    EquipmentModule.recalculateEquipmentStats(player);
+  } else {
+    // fallback: ใช้ base stats เฉย ๆ (ไม่มีการใส่ equipment)
+    Object.assign(player.combat_stats, baseStats);
+    // ปรับ hp/mp ไม่ให้เกิน max
+    player.combat_stats.hp = Math.min(player.com_bat_stats.hp_max, player.combat_stats.hp);
+    player.combat_stats.mp = Math.min(player.combat_stats.mp_max, player.combat_stats.mp);
+  }
+
+  // 3. ลบ property ชั่วคราว (เผื่อ equipment module ใช้แล้วลบให้ด้วย)
+  delete player._base_combat_stats;
 }
 
 // =============================================================================
@@ -859,6 +890,9 @@ const PlayerModule = Object.freeze({
   calcBaseAtk,
   getAdvancementTier,
   calcSkillSlots,
+
+  // Advanced stat calculation (สำหรับระบบอื่น เช่น equipment)
+  calculateBaseCombatStatsWithMultiplier: _calculateBaseStatsWithAdvancement,
 });
 
 // รองรับทั้ง Browser (window) และ Node.js (module.exports)
